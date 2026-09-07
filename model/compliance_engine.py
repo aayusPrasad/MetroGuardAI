@@ -10,7 +10,7 @@ MANDATORY_FIELDS = (
     "mrp",
     "manufacturing_date",
     "consumer_care",
-    "unit_sale_price",  # Always evaluate USP so it never vanishes from the table
+    "unit_sale_price",
 )
 
 class ComplianceEngine:
@@ -24,7 +24,6 @@ class ComplianceEngine:
         except FileNotFoundError:
             self.rules = {"mandatory_declarations": []}
             
-        # Precise rule reference map matching the rulebook specifications
         self.rule_refs = {
             "manufacturer_packer_importer": "Rule 6(1)(a), Rule 10",
             "generic_name": "Rule 6(1)(b)",
@@ -35,7 +34,6 @@ class ComplianceEngine:
             "unit_sale_price": "Rule 6(1)(f) / Rule 2(m)",
         }
         
-        # Override or extend dynamically from JSON rulebook if available
         for rule in self.rules.get("mandatory_declarations", []):
             rule_id = rule.get("id")
             ref = rule.get("rule_ref")
@@ -49,13 +47,17 @@ class ComplianceEngine:
         *,
         product_metadata: Mapping[str, Any] | None = None,
         is_ecommerce: bool = False,
+        is_molded: bool = False,
     ) -> dict[str, Any]:
         
         metadata = product_metadata or {}
         fields = list(MANDATORY_FIELDS)
         
-        # Evaluate Unit Sale Price waiver condition based on actual numbers
-        mrp_val = extraction.get("mrp", {}).get("value", {}).get("amount")
+        # Safe extraction of MRP amount to prevent NoneType crashes
+        mrp_field = extraction.get("mrp") or {}
+        mrp_val = mrp_field.get("value")
+        if isinstance(mrp_val, dict):
+            mrp_val = mrp_val.get("amount")
         mrp_float = float(mrp_val) if mrp_val and str(mrp_val).replace('.', '', 1).isdigit() else 0.0
         
         requires_usp = False
@@ -75,27 +77,42 @@ class ComplianceEngine:
         not_detected: list[str] = []
 
         for field in fields:
-            extracted = extraction.get(field, {})
+            extracted = extraction.get(field) or {}
             rule_reference = self.rule_refs.get(field, "Rule 6")
             
-            # Special check for USP when it is genuinely exempt by size/price bounds
             if field == "unit_sale_price" and not requires_usp:
                 results[field] = {
                     "status": "compliant",
                     "rule_ref": rule_reference,
                     "value": "Exempt by statutory size/price bounds",
                     "confidence": 1.0,
-                    "bbox_height_mm": None
+                    "bbox_height_mm": None,
+                    "is_molded": is_molded
                 }
                 continue
 
             if isinstance(extracted, Mapping) and extracted.get("status") == "found":
+                bbox_height_mm = extracted.get("bbox_height_mm")
+                
+                # Apply molded vs normal font size threshold per schema requirements
+                min_h = 2.0 if is_molded else 1.0
+                field_status = "compliant"
+                if bbox_height_mm is not None and bbox_height_mm < min_h:
+                    field_status = "non_compliant"
+                    violations.append({
+                        "field": field,
+                        "rule_ref": "Rule 7",
+                        "severity": "major",
+                        "description": f"Font height {bbox_height_mm:.2f}mm is below required minimum of {min_h}mm (is_molded={is_molded})."
+                    })
+
                 results[field] = {
-                    "status": "compliant",
+                    "status": field_status,
                     "rule_ref": rule_reference,
                     "value": extracted.get("value"),
                     "confidence": extracted.get("confidence"),
-                    "bbox_height_mm": extracted.get("bbox_height_mm")
+                    "bbox_height_mm": bbox_height_mm,
+                    "is_molded": is_molded
                 }
             else:
                 results[field] = {
@@ -105,7 +122,6 @@ class ComplianceEngine:
                 }
                 not_detected.append(field)
 
-        # Remove unit_sale_price from mandatory missing checks if it was exempt
         active_not_detected = [f for f in not_detected if f != "unit_sale_price" or requires_usp]
 
         if violations:
@@ -118,6 +134,7 @@ class ComplianceEngine:
         return {
             "overall_status": overall_status,
             "is_ecommerce": is_ecommerce,
+            "is_molded": is_molded,
             "usp_context": {
                 "required": requires_usp,
                 "reason": usp_reason_note
