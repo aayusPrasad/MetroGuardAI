@@ -1,0 +1,170 @@
+%%writefile lmpc_rules_2011.json
+{
+  "source": "The Legal Metrology (Packaged Commodities) Rules, 2011 (as amended)",
+  "effective_from": "2011-04-01",
+  "scope_exclusions": {
+    "rule_3": [
+      "Packages of commodities containing quantity of more than 25 kg or 25 litre (excluding cement and fertilizer sold in bags up to 50 kg)",
+      "Packaged commodities meant for industrial consumers or institutional consumers"
+    ],
+    "rule_26_full_exemption": [
+      {
+        "condition": "net weight or measure is 10g or 10ml or less (sold by weight/measure)",
+        "note": "MRP and net quantity must still be declared if package is between 10g-20g or 10ml-20ml"
+      },
+      "Fast food items packed by restaurant/hotel",
+      "Scheduled and non-scheduled formulations under Drugs (Price Control) Order, 1995",
+      "Agricultural farm produce in packages above 50 kg"
+    ]
+  },
+  "mandatory_declarations": [
+    {
+      "id": "manufacturer_packer_importer",
+      "rule_ref": "Rule 6(1)(a), Rule 10",
+      "field": "Name and complete address of manufacturer, or manufacturer AND packer (if different), or importer (if imported)",
+      "required": true,
+      "notes": "If no qualifying words 'manufactured by'/'packed by' appear, name+address is presumed to be the manufacturer's. For imported goods packed in India, must also show name/address of Indian packer/importer on principal display panel."
+    },
+    {
+      "id": "generic_name",
+      "rule_ref": "Rule 6(1)(b)",
+      "field": "Common or generic name of the commodity",
+      "required": true,
+      "notes": "If package contains more than one product, name and quantity/number of each must be mentioned."
+    },
+    {
+      "id": "net_quantity",
+      "rule_ref": "Rule 6(1)(c), Rule 12, Rule 13",
+      "field": "Net quantity in standard unit of weight/measure/number",
+      "required": true,
+      "notes": "Must use SI units only. No 'dozen/score/gross'. Cannot use words like 'minimum', 'about', 'approximately' etc. that create misleading impression of quantity."
+    },
+    {
+      "id": "mfg_month_year",
+      "rule_ref": "Rule 6(1)(d)",
+      "field": "Month and year of manufacture/pre-packing/import",
+      "required": true,
+      "exceptions": [
+        "Bidis or incense sticks",
+        "Domestic LPG cylinders (14.2kg or 5kg) marketed by public sector undertaking",
+        "Food articles (governed by food safety law instead)",
+        "Seeds certified under Seeds Act, 1966",
+        "Cosmetics (governed by Drugs and Cosmetics Rules, 1945)"
+      ]
+    },
+    {
+      "id": "mrp",
+      "rule_ref": "Rule 6(1)(e), Rule 2(m)",
+      "field": "Retail Sale Price (MRP)",
+      "required": true,
+      "format": "Declared in Indian currency, inclusive of all taxes (rigid wording templates removed by amendment)",
+      "rounding_rule": "Fraction below 50 paise rounds down to preceding rupee; fraction from 50-95 paise rounds to 50 paise",
+      "exceptions": [
+        "Bidis",
+        "Domestic LPG cylinders priced under Administrative Price Mechanism",
+        "Alcoholic beverages/spirituous liquor (governed by State Excise laws unless those laws don't cover MRP declaration)"
+      ]
+    },
+    {
+      "id": "dimensions",
+      "rule_ref": "Rule 6(1)(f), Rule 14, Rule 15",
+      "field": "Dimensions of commodity, where relevant to price (e.g. bedsheets, sarees, towels, fabric)",
+      "required": "conditional",
+      "notes": "Required only where size is relevant to the commodity or where dimensions/weight relate to price."
+    },
+    {
+      "id": "country_of_origin",
+      "rule_ref": "Amended provision (post-2021)",
+      "field": "Country of origin / manufacture",
+      "required": "conditional",
+      "notes": "Mandatory for imported products."
+    },
+    {
+      "id": "consumer_care",
+      "rule_ref": "Rule 6(2)",
+      "field": "Name, address, telephone number, and email (if available) of consumer complaints contact",
+      "required": true
+    },
+    {
+      "id": "unit_sale_price",
+      "rule_ref": "Rule 2(m) / general practice (amended)",
+      "field": "Unit sale price (USP)",
+      "required": true,
+      "rounding_rule": "Rounded to nearest 2 decimal places",
+      "unit_rule": "If net quantity is less than 1 kg/litre, USP is declared per gram or per millilitre; if net quantity is 1 kg/litre or more, USP is declared per kilogram or per litre",
+      "waiver_conditions": [
+        "Not required if principal display panel area is 100 sq cm or less",
+        "Not required if MRP is Rs. 35 or less"
+      ]
+    }
+  ],
+  "prohibited_practices": [
+    "Affixing individual stickers to alter/make a required declaration (exception: stickers may be used ONLY to reduce MRP, and must not cover the original MRP)",
+    "Reading a declaration through liquid commodity in the package",
+    "Using words like 'minimum', 'not less than', 'average', 'about', 'approximately' in quantity declarations",
+    "Altering, obliterating, or smudging retail sale price once printed",
+    "Selling above declared MRP"
+  ],
+  "font_size_rules": {
+    "rule_ref": "Rule 7",
+    "general_letter_height_mm": {
+      "normal": 1,
+      "blown_formed_molded_embossed_perforated": 2
+    },
+    "width_to_height_ratio": "Letter/numeral width must be >= 1/3 of its height (except numeral '1' and letters i, I, l)",
+    "table_1_by_weight_or_volume": [
+      { "net_quantity_range": "up to 200 g/ml", "min_height_mm_normal": 1, "min_height_mm_molded": 2 },
+      { "net_quantity_range": "above 200 g/ml up to 500 g/ml", "min_height_mm_normal": 2, "min_height_mm_molded": 4 },
+      { "net_quantity_range": "above 500 g/ml", "min_height_mm_normal": 4, "min_height_mm_molded": 6 }
+    ],
+    "table_2_by_length_area_or_number": [
+      { "panel_area_range": "up to 100 cm2", "min_height_mm_normal": 1, "min_height_mm_molded": 2 },
+      { "panel_area_range": "above 100 up to 500 cm2", "min_height_mm_normal": 2, "min_height_mm_molded": 4 },
+      { "panel_area_range": "above 500 up to 2500 cm2", "min_height_mm_normal": 4, "min_height_mm_molded": 6 },
+      { "panel_area_range": "above 2500 cm2", "min_height_mm_normal": 6, "min_height_mm_molded": 6 }
+    ],
+    "exception": "Rules 7(1)-(3) do not apply if the info is already required to be given under some other applicable law."
+  },
+  "placement_and_manner_rules": {
+    "rule_ref": "Rule 8, Rule 9",
+    "principal_display_panel_required": true,
+    "quantity_declaration_clear_space": {
+      "above_below": "at least equal to the height of the numeral used",
+      "left_right": "at least twice the height of the numeral used"
+    },
+    "manner": [
+      "Legible and prominent",
+      "Retail sale price and net quantity numerals must be in a colour that contrasts conspicuously with label background (exception: blown/formed/molded glass or plastic surfaces)",
+      "Hand-written/hand-scripted declarations must be clear, unambiguous, legible",
+      "Language must be Hindi (Devanagari) or English (other languages may be added in addition)",
+      "If package has outer wrapper/container, the wrapper must also carry all required declarations, unless wrapper is transparent and inner declarations are clearly readable through it"
+    ]
+  },
+  "e_commerce_declarations": {
+    "rule_ref": "Amended provision (post-2021)",
+    "applies_to": "Commodities sold through e-commerce platforms",
+    "required_fields": [
+      "Name and address of manufacturer/packer/importer",
+      "Country of origin",
+      "Consumer care details (name, address, telephone/email)",
+      "Net quantity",
+      "MRP inclusive of all taxes",
+      "Month and year of manufacture/import",
+      "Common/generic name of the commodity"
+    ]
+  },
+  "wholesale_package_declarations": {
+    "rule_ref": "Rule 24",
+    "required_fields": [
+      "Name and address of manufacturer/importer/packer",
+      "Identity of the commodity",
+      "Total number of retail packages contained, OR net quantity in standard units"
+    ]
+  },
+  "penalties": {
+    "rule_ref": "Rule 32",
+    "registration_violations_rules_27_to_31": "Fine of Rs. 4,000",
+    "other_rule_violations_no_specified_penalty": "Fine of Rs. 2,000"
+  },
+  "note_for_implementation": "This JSON reflects the LMPC Rules 2011 as updated by the 2021+ amendments: Rule 5 (mandatory standard package sizes) was omitted and no longer applies; MRP wording templates were simplified to 'in Indian currency, inclusive of all taxes'; country of origin and e-commerce declaration requirements were added; and unit sale price (USP) rules were refined with per-gram/per-kg thresholds and waiver conditions (panel area <=100 sq cm or MRP <= Rs. 35). For a production system, still cross-check against the latest consolidated/amended text, since further amendments continue through 2025-2026."
+}
