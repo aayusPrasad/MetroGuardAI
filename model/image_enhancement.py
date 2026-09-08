@@ -1,6 +1,5 @@
-%%writefile image_enhancement.py
-"""
-Smart Image Enhancement for MetroGuard AI.
+
+"""Smart Image Enhancement for MetroGuard AI.
 Uses ESPCN Super-Resolution to recover low-resolution packaging images for OCR.
 """
 
