@@ -1,4 +1,4 @@
-%%writefile report_generator.py
+
 """PDF Inspection Certificate Generator for MetroGuard AI."""
 
 from __future__ import annotations
