@@ -1,4 +1,4 @@
-%%writefile preprocessing.py
+
 """Image preprocessing primitives for controlled MetroGuard image capture.
 
 This module deliberately does *not* attempt to infer physical dimensions from
