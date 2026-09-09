@@ -1,17 +1,16 @@
 import type { Scan } from './mockData';
+import { saveFile } from './fileStore';
 
 const API_BASE = "http://127.0.0.1:8000";
 
 export async function analyzeImage(
-  files: File[],
+  file: File,
   packWidthCm?: number,
   packHeightCm?: number,
   isMolded?: boolean
 ): Promise<Scan> {
   const formData = new FormData();
-  formData.append("file", files[0]);
-  if (files[1]) formData.append("file2", files[1]);
-  if (files[2]) formData.append("file3", files[2]);
+  formData.append("file", file);
   if (packWidthCm) formData.append("manual_pack_width_cm", String(packWidthCm));
   if (packHeightCm) formData.append("manual_pack_height_cm", String(packHeightCm));
   if (isMolded !== undefined) formData.append("is_molded", String(isMolded));
@@ -22,7 +21,42 @@ export async function analyzeImage(
     throw new Error(err.detail || `Analysis failed: ${res.status}`);
   }
   const raw = await res.json();
-  return normalizeApiScan(raw, files[0].name);
+  const scan = normalizeApiScan(raw, file.name, file);
+  await saveFile(scan.id, file);
+  return scan;
+}
+
+export interface BatchItem {
+  file: File;
+  status: 'pending' | 'processing' | 'done' | 'failed';
+  scan?: Scan;
+  error?: string;
+}
+
+export async function analyzeBatch(
+  files: File[],
+  onProgress: (index: number, item: BatchItem) => void,
+  packWidthCm?: number,
+  packHeightCm?: number,
+  isMolded?: boolean
+): Promise<BatchItem[]> {
+  const items: BatchItem[] = files.map(file => ({ file, status: 'pending' }));
+
+  for (let i = 0; i < files.length; i++) {
+    items[i].status = 'processing';
+    onProgress(i, items[i]);
+    try {
+      const scan = await analyzeImage(files[i], packWidthCm, packHeightCm, isMolded);
+      items[i].status = 'done';
+      items[i].scan = scan;
+    } catch (e) {
+      items[i].status = 'failed';
+      items[i].error = e instanceof Error ? e.message : 'Scan failed';
+    }
+    onProgress(i, items[i]);
+  }
+
+  return items;
 }
 
 export async function analyzeEcommerce(url: string): Promise<Scan> {
@@ -41,12 +75,14 @@ export async function analyzeEcommerce(url: string): Promise<Scan> {
 
 export async function generateReport(
   file: File,
+  format: 'pdf' | 'docx' = 'pdf',
   packWidthCm?: number,
   packHeightCm?: number,
   isMolded?: boolean
 ): Promise<Blob> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("format", format);
   if (packWidthCm) formData.append("manual_pack_width_cm", String(packWidthCm));
   if (packHeightCm) formData.append("manual_pack_height_cm", String(packHeightCm));
   if (isMolded !== undefined) formData.append("is_molded", String(isMolded));
@@ -54,7 +90,10 @@ export async function generateReport(
   const res = await fetch(`${API_BASE}/generate-report`, { method: "POST", body: formData });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Report generation failed" }));
-    throw new Error(err.detail || `Report generation failed: ${res.status}`);
+    const message = typeof err.detail === 'string' ? err.detail
+      : Array.isArray(err.detail) ? err.detail.map((e: any) => e.msg || JSON.stringify(e)).join('; ')
+      : `Report generation failed: ${res.status}`;
+    throw new Error(message);
   }
   return res.blob();
 }
@@ -79,7 +118,7 @@ export function downloadBlob(blob: Blob, filename: string) {
  *     regex extraction (e.g. mrp.amount: "45.00"), while Scan's FieldValue
  *     type expects `amount: number` — coerce these to numbers.
  */
-function normalizeApiScan(raw: any, sourceLabel: string): Scan {
+function normalizeApiScan(raw: any, sourceLabel: string, sourceFile?: File): Scan {
   const fields: Scan['fields'] = {};
   for (const [key, field] of Object.entries<any>(raw.fields || {})) {
     let value = field.value;
@@ -116,5 +155,6 @@ function normalizeApiScan(raw: any, sourceLabel: string): Scan {
     preprocessing: raw.preprocessing,
     image_url: '',
     message: raw.message,
+    __sourceFile: sourceFile,
   };
 }
