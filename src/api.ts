@@ -3,13 +3,15 @@ import type { Scan } from './mockData';
 const API_BASE = "http://127.0.0.1:8000";
 
 export async function analyzeImage(
-  file: File,
+  files: File[],
   packWidthCm?: number,
   packHeightCm?: number,
   isMolded?: boolean
 ): Promise<Scan> {
   const formData = new FormData();
-  formData.append("file", file);
+  formData.append("file", files[0]);
+  if (files[1]) formData.append("file2", files[1]);
+  if (files[2]) formData.append("file3", files[2]);
   if (packWidthCm) formData.append("manual_pack_width_cm", String(packWidthCm));
   if (packHeightCm) formData.append("manual_pack_height_cm", String(packHeightCm));
   if (isMolded !== undefined) formData.append("is_molded", String(isMolded));
@@ -20,7 +22,7 @@ export async function analyzeImage(
     throw new Error(err.detail || `Analysis failed: ${res.status}`);
   }
   const raw = await res.json();
-  return normalizeApiScan(raw, file.name);
+  return normalizeApiScan(raw, files[0].name);
 }
 
 export async function analyzeEcommerce(url: string): Promise<Scan> {
