@@ -47,6 +47,49 @@ const wait = (ms = 520) => new Promise(resolve => setTimeout(resolve, ms));
 export interface ScanFilters { search?: string; status?: OverallStatus | 'all'; type?: ScanType | 'all' }
 export async function listScans(filters: ScanFilters = {}) { await wait(); const query = filters.search?.toLowerCase().trim() ?? ''; return scans.filter(scan => (!query || `${scan.id} ${scan.product_name} ${scan.manufacturer}`.toLowerCase().includes(query)) && (!filters.status || filters.status === 'all' || scan.overall_status === filters.status) && (!filters.type || filters.type === 'all' || scan.scan_type === filters.type)); }
 export async function getScanById(id: string) { await wait(360); return scans.find(scan => scan.id === id) ?? null; }
-export async function submitScan(payload: { productName?: string; ecommerce?: boolean; qualityIssue?: boolean }) { await wait(900); const template = scans[10]; const next: Scan = { ...template, id: `scan-2026-${Date.now().toString().slice(-4)}`, product_name: payload.productName || (payload.ecommerce ? 'New E-Commerce Product Page' : 'New Uploaded Product'), scan_date: new Date().toISOString(), is_ecommerce: Boolean(payload.ecommerce), scan_type: payload.ecommerce ? 'ecommerce' : 'physical', overall_status: payload.qualityIssue ? 'insufficient_image_quality' : 'compliant', fields: payload.qualityIssue ? {} : template.fields, not_detected_fields: payload.qualityIssue ? [] : template.not_detected_fields, message: payload.qualityIssue ? 'The captured image is below the minimum required resolution. Please recapture with better lighting and focus.' : undefined }; scans.unshift(next); return next; }
+
+import { analyzeImage, analyzeEcommerce } from './api';
+
+export async function submitScan(payload: {
+  productName?: string;
+  ecommerce?: boolean;
+  qualityIssue?: boolean;
+  file?: File;
+  url?: string;
+  packWidthCm?: number;
+  packHeightCm?: number;
+  isMolded?: boolean;
+}) {
+  let next: Scan;
+
+  if (payload.ecommerce && payload.url) {
+    next = await analyzeEcommerce(payload.url);
+  } else if (payload.file) {
+    next = await analyzeImage(payload.file, payload.packWidthCm, payload.packHeightCm, payload.isMolded);
+  } else {
+    // Fallback to the old mock behavior — keeps the "Simulate insufficient
+    // image quality" toggle and batch-mode's placeholder submit working
+    // without a real file/url being provided.
+    await wait(900);
+    const template = scans[10];
+    next = {
+      ...template,
+      id: `scan-2026-${Date.now().toString().slice(-4)}`,
+      product_name: payload.productName || (payload.ecommerce ? 'New E-Commerce Product Page' : 'New Uploaded Product'),
+      scan_date: new Date().toISOString(),
+      is_ecommerce: Boolean(payload.ecommerce),
+      scan_type: payload.ecommerce ? 'ecommerce' : 'physical',
+      overall_status: payload.qualityIssue ? 'insufficient_image_quality' : 'compliant',
+      fields: payload.qualityIssue ? {} : template.fields,
+      not_detected_fields: payload.qualityIssue ? [] : template.not_detected_fields,
+      message: payload.qualityIssue ? 'The captured image is below the minimum required resolution. Please recapture with better lighting and focus.' : undefined,
+    };
+  }
+
+  if (payload.productName) next.product_name = payload.productName;
+  scans.unshift(next);
+  return next;
+}
+
 export async function getReviewItems() { await wait(); return scans.flatMap(scan => scan.not_detected_fields.map(field => ({ scan, field }))).sort((a, b) => +new Date(b.scan.scan_date) - +new Date(a.scan.scan_date)); }
 export function resolveReview(scanId: string, fieldId: string, compliant: boolean) { const scan = scans.find(item => item.id === scanId); if (!scan) return; const field = scan.fields[fieldId]; if (field) { field.status = compliant ? 'compliant' : 'non_compliant'; field.reason = undefined; } scan.not_detected_fields = scan.not_detected_fields.filter(fieldName => fieldName !== fieldId); if (!compliant) { scan.overall_status = 'non_compliant'; scan.violations.push({ rule_ref: field?.rule_ref || 'LM-000', severity: 'major', description: `${FIELD_LABELS[fieldId]} requires enforcement action.` }); } else if (!scan.not_detected_fields.length && scan.overall_status === 'review_required') scan.overall_status = 'compliant'; }
