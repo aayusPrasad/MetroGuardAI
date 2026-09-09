@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Activity, AlertTriangle, BarChart3, Bell, CheckCircle2, ChevronDown, ChevronRight, Check, ClipboardCheck, Copy, Eye, EyeOff, FileDown, FileImage, FileText, Gauge, Grid2X2, LayoutDashboard, LogIn, Menu, Plus, Search, ScanLine, ShieldCheck, SlidersHorizontal, UploadCloud, UserPlus, Users as UsersIcon, XCircle } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { FIELD_LABELS, getReviewItems, getScanById, listScans, resolveReview, scans, submitScan, type OverallStatus, type Scan, type ScanFilters, type Severity } from './mockData';
+import { analyzeBatch, generateReport, downloadBlob, type BatchItem } from './api';
+import { getFile } from './fileStore';
 
 const CHART = { critical: '#dd4e4e', major: '#d99b17', minor: '#2b78bb', compliant: '#1e8b63', nonCompliant: '#dd4e4e', grid: '#edf1f5', axis: '#73818f', tooltipBg: '#172333' };
 const HERO_IMAGE = 'https://images.pexels.com/photos/32845692/pexels-photo-32845692.jpeg?auto=compress&cs=tinysrgb&h=650&w=940';
@@ -27,7 +29,33 @@ function RuleRefChart(){const data=useMemo(()=>{const m=new Map<string,number>()
 function ScanTable({rows,compact=false}:{rows:Scan[];compact?:boolean}){return <Card className="table-card"><div className="table-wrap"><table><thead><tr><th>SCAN ID</th><th>PRODUCT / MANUFACTURER</th><th>SCAN DATE</th><th>STATUS</th><th>VIOLATIONS</th><th>CONFIDENCE</th><th>TYPE</th></tr></thead><tbody>{rows.map(s=><tr key={s.id} onClick={()=>go(`/scans/${s.id}`)}><td className="link">{s.id}</td><td><b>{s.product_name}</b><small>{s.manufacturer}</small></td><td>{fmt(s.scan_date)}</td><td><StatusBadge status={s.overall_status}/></td><td>{s.violations.length?s.violations.map(v=><SeverityBadge key={v.rule_ref} severity={v.severity}/>):<span className="muted">—</span>}</td><td><span className="confidence">{Math.round(Object.values(s.fields).reduce((a,f)=>a+f.confidence,0)/(Object.values(s.fields).length||1)*100)}%</span></td><td><span className="type-pill">{s.is_ecommerce?'E-Commerce':'Physical'}</span></td></tr>)}</tbody></table></div>{!compact&&<div className="table-foot">Showing <b>1–{rows.length}</b> of {rows.length} scans <button>‹ Prev</button><button className="page-num">1</button><button>Next ›</button></div>}</Card>}
 function Dashboard(){const compliant=scans.filter(s=>s.overall_status==='compliant').length, non=scans.filter(s=>s.overall_status==='non_compliant').length, review=scans.filter(s=>s.overall_status==='review_required').length; return <Page title="Enforcement Dashboard" subtitle="South Delhi District · Legal Metrology Division" actions={<button className="primary" onClick={()=>go('/scans/new')}><Plus size={16}/> New Scan</button>}><div className="period"><span>Period:</span><button>Last 7 Days</button><button className="selected">Last 30 Days</button><button>Custom Range</button><span className="updated">◷ Updated 06 Sep 2026, 08:03 IST</span></div><div className="summary-grid"><SummaryCard label="Total Scans" value={scans.length} icon={FileImage} hint="12 scans submitted today" onClick={()=>go('/scans')}/><SummaryCard label="Compliant" value={compliant} icon={CheckCircle2} tone="green" hint={`${Math.round(compliant/scans.length*100)}% overall compliance rate`} onClick={()=>go('/scans?status=compliant')}/><SummaryCard label="Non-Compliant" value={non} icon={XCircle} tone="red" hint="4 critical violations today" onClick={()=>go('/scans?status=non_compliant')}/><SummaryCard label="Pending Review" value={review} icon={ClipboardCheck} tone="amber" hint="Requires manual review" onClick={()=>go('/review-queue')}/><SummaryCard label="Quality Issues" value={scans.filter(s=>s.overall_status==='insufficient_image_quality').length} icon={AlertTriangle} tone="slate" hint="Recapture recommended"/></div><div className="chart-grid"><Card><div className="card-title"><div><h3>Violations by Severity</h3><p>Last 30 days — all scans</p></div></div><SeverityChart/></Card><Card><div className="card-title"><div><h3>Compliance Rate — Last 8 Weeks</h3><p>Scans per week by outcome</p></div></div><ComplianceChart/></Card></div><Card><div className="card-title"><div><h3>Recent Scans</h3><p>10 most recent submissions</p></div><button className="text-button" onClick={()=>go('/scans')}>View all scans <ChevronRight size={15}/></button></div><ScanTable rows={scans.slice(0,10)} compact/></Card></Page>}
 function Scans(){const [rows,setRows]=useState<Scan[]>([]);const [filter,setFilter]=useState<ScanFilters>({status:'all',type:'all'});const load=()=>listScans(filter).then(setRows);useEffect(()=>{load()},[filter.search,filter.status,filter.type]);return <Page title="Scan Search & History" subtitle={`${rows.length} scans found`} actions={<button className="secondary"><FileDown size={15}/> Export CSV</button>}><div className="history-layout"><Card className="filters"><b>FILTERS</b><label>Search<small>Product name, manufacturer, or scan ID</small><div className="input-icon"><Search size={15}/><input placeholder="Search scans..." value={filter.search||''} onChange={e=>setFilter({...filter,search:e.target.value})}/></div></label><label>Status<select value={filter.status} onChange={e=>setFilter({...filter,status:e.target.value as OverallStatus|'all'})}><option value="all">All statuses</option><option value="compliant">Compliant</option><option value="non_compliant">Non-Compliant</option><option value="review_required">Review Required</option><option value="insufficient_image_quality">Quality Issue</option></select></label><label>Type<select value={filter.type} onChange={e=>setFilter({...filter,type:e.target.value as ScanFilters['type']})}><option value="all">All types</option><option value="physical">Physical</option><option value="ecommerce">E-Commerce</option></select></label><label>Date range<input type="date"/><input type="date"/></label></Card><ScanTable rows={rows}/></div></Page>}
-function Detail({id}:{id:string}){const [scan,setScan]=useState<Scan|null>(null);const [tech,setTech]=useState(false);useEffect(()=>{getScanById(id).then(setScan)},[id]);if(!scan)return <Page title="Loading scan…"><Card className="skeleton big"><div style={{padding:'40px'}}/></Card></Page>;const download=()=>{const blob=new Blob([`MetroGuard AI Report\n${scan.product_name}\nStatus: ${scan.overall_status}\nGenerated: ${new Date().toISOString()}`],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${scan.id}-report.txt`;a.click();};return <Page title={scan.product_name} subtitle={`${scan.manufacturer} · ${fmt(scan.scan_date)} · ${scan.id}`} actions={<><StatusBadge status={scan.overall_status}/><button className="primary" onClick={download}><FileDown size={15}/> Download Report</button></>}><div className="detail-grid"><Card className="product-panel"><div className="mock-pack"><span>METRO<br/><b>GUARD</b></span><strong>{scan.product_name.split(' ').slice(0,3).join(' ')}</strong><small>LEGAL METROLOGY CHECK</small><i>₹{85 + Number(scan.id.slice(-2))}</i></div><div className="zoom"><button>−</button><span>100%</span><button>+</button></div></Card><Card className="fields"><h3>Declaration Field Breakdown</h3>{scan.is_ecommerce&&<div className="info-banner"><Activity size={17}/><span><b>E-Commerce scan</b> Font-size, placement, and physical pack checks do not apply. Only declaration presence has been assessed.</span></div>}{scan.overall_status==='insufficient_image_quality'?<div className="quality-state"><AlertTriangle size={28}/><h3>Image quality insufficient</h3><p>{scan.message}</p><button className="primary" onClick={()=>go('/scans/new')}>Recapture and retry</button></div>:<div className="field-list">{Object.entries(scan.fields).map(([key,f])=><div className={`field ${f.status==='not_detected'?'not-detected':''}`} key={key}><div className="field-head"><b>{FIELD_LABELS[key]}</b><StatusBadge status={f.status==='compliant'?'compliant':f.status==='non_compliant'?'non_compliant':'review_required'}/></div>{f.status==='not_detected'?<p className="reason">{f.reason}</p>:<><strong>{typeof f.value==='object'?Array.isArray(f.value)?f.value.join(' · '):'amount' in f.value?`₹${f.value.amount} ${f.value.unit||''}${f.value.inclusive_of_all_taxes?' · inclusive of all taxes':''}`:JSON.stringify(f.value):f.value}</strong><small>Confidence {Math.round(f.confidence*100)}% · Rule reference <span className="link">{f.rule_ref}</span></small></>}</div>)}</div>}{scan.usp_context.required&&<div className="usp"><Gauge size={18}/><div><b>Unit Sale Price (USP)</b><p>{scan.usp_context.reason}</p></div></div>}</Card></div><Card><div className="card-title"><div><h3>Violations</h3><p>{scan.violations.length?'Detected issues requiring attention':'No violations identified'}</p></div></div>{scan.violations.map(v=><div className="violation" key={v.rule_ref}><SeverityBadge severity={v.severity}/><div><b>{v.rule_ref}</b><p>{v.description}</p></div></div>)}</Card><Card className="technical"><button onClick={()=>setTech(!tech)}><SlidersHorizontal size={16}/><b>Technical Calibration Details</b><ChevronDown className={tech?'rotate':''} size={16}/></button>{tech&&<div className="tech-grid">{Object.entries(scan.preprocessing).map(([k,v])=><div key={k}><small>{k.replace(/_/g,' ')}</small><b>{String(v)}</b></div>)}</div>}</Card></Page>}
+function Detail({id}:{id:string}){
+  const [scan,setScan]=useState<Scan|null>(null);
+  const [tech,setTech]=useState(false);
+  const [downloading,setDownloading]=useState<'pdf'|'docx'|null>(null);
+  const [downloadError,setDownloadError]=useState('');
+  useEffect(()=>{getScanById(id).then(setScan)},[id]);
+  if(!scan)return <Page title="Loading scan…"><Card className="skeleton big"><div style={{padding:'40px'}}/></Card></Page>;
+
+  const download=async(format:'pdf'|'docx')=>{
+    setDownloadError('');
+    setDownloading(format);
+    try{
+      const sourceFile=scan.__sourceFile||await getFile(scan.id);
+      if(!sourceFile){
+        setDownloadError('Original image not available for this scan — cannot regenerate the report. This can happen for older scans or after the browser session has been cleared.');
+        setDownloading(null);
+        return;
+      }
+      const blob=await generateReport(sourceFile,format);
+      downloadBlob(blob,`MetroGuard_Inspection_Report.${format}`);
+    }catch(e){
+      setDownloadError(e instanceof Error?e.message:'Report generation failed.');
+    }
+    setDownloading(null);
+  };
+
+  return <Page title={scan.product_name} subtitle={`${scan.manufacturer} · ${fmt(scan.scan_date)} · ${scan.id}`} actions={<><StatusBadge status={scan.overall_status}/><button className="primary" disabled={downloading==='pdf'} onClick={()=>download('pdf')}><FileDown size={15}/> {downloading==='pdf'?'Generating…':'Download PDF'}</button><button className="secondary" disabled={downloading==='docx'} onClick={()=>download('docx')}><FileText size={15}/> {downloading==='docx'?'Generating…':'Download DOCX'}</button></>}><div className="detail-grid"><Card className="product-panel"><div className="mock-pack"><span>METRO<br/><b>GUARD</b></span><strong>{scan.product_name.split(' ').slice(0,3).join(' ')}</strong><small>LEGAL METROLOGY CHECK</small><i>₹{85 + Number(scan.id.slice(-2))}</i></div><div className="zoom"><button>−</button><span>100%</span><button>+</button></div></Card><Card className="fields"><h3>Declaration Field Breakdown</h3>{downloadError&&<div className="auth-error">{downloadError}</div>}{scan.is_ecommerce&&<div className="info-banner"><Activity size={17}/><span><b>E-Commerce scan</b> Font-size, placement, and physical pack checks do not apply. Only declaration presence has been assessed.</span></div>}{scan.overall_status==='insufficient_image_quality'?<div className="quality-state"><AlertTriangle size={28}/><h3>Image quality insufficient</h3><p>{scan.message}</p><button className="primary" onClick={()=>go('/scans/new')}>Recapture and retry</button></div>:<div className="field-list">{Object.entries(scan.fields).map(([key,f])=><div className={`field ${f.status==='not_detected'?'not-detected':''}`} key={key}><div className="field-head"><b>{FIELD_LABELS[key]}</b><StatusBadge status={f.status==='compliant'?'compliant':f.status==='non_compliant'?'non_compliant':'review_required'}/></div>{f.status==='not_detected'?<p className="reason">{f.reason}</p>:<><strong>{typeof f.value==='object'?Array.isArray(f.value)?f.value.join(' · '):'amount' in f.value?`₹${f.value.amount} ${f.value.unit||''}${f.value.inclusive_of_all_taxes?' · inclusive of all taxes':''}`:JSON.stringify(f.value):f.value}</strong><small>Confidence {Math.round(f.confidence*100)}% · Rule reference <span className="link">{f.rule_ref}</span></small></>}</div>)}</div>}{scan.usp_context.required&&<div className="usp"><Gauge size={18}/><div><b>Unit Sale Price (USP)</b><p>{scan.usp_context.reason}</p></div></div>}</Card></div><Card><div className="card-title"><div><h3>Violations</h3><p>{scan.violations.length?'Detected issues requiring attention':'No violations identified'}</p></div></div>{scan.violations.map(v=><div className="violation" key={v.rule_ref}><SeverityBadge severity={v.severity}/><div><b>{v.rule_ref}</b><p>{v.description}</p></div></div>)}</Card><Card className="technical"><button onClick={()=>setTech(!tech)}><SlidersHorizontal size={16}/><b>Technical Calibration Details</b><ChevronDown className={tech?'rotate':''} size={16}/></button>{tech&&<div className="tech-grid">{Object.entries(scan.preprocessing).map(([k,v])=><div key={k}><small>{k.replace(/_/g,' ')}</small><b>{String(v)}</b></div>)}</div>}</Card></Page>}
 function NewScan({mode='image'}:{mode?:'image'|'ecommerce'|'batch'}){
   const [name,setName]=useState('');
   const [url,setUrl]=useState('');
@@ -38,6 +66,10 @@ function NewScan({mode='image'}:{mode?:'image'|'ecommerce'|'batch'}){
   const [step,setStep]=useState(0);
   const [issue,setIssue]=useState(false);
   const [error,setError]=useState('');
+
+  const [batchFiles,setBatchFiles]=useState<File[]>([]);
+  const [batchItems,setBatchItems]=useState<BatchItem[]>([]);
+  const [batchRunning,setBatchRunning]=useState(false);
 
   const submit=async()=>{
     setError('');
@@ -63,7 +95,82 @@ function NewScan({mode='image'}:{mode?:'image'|'ecommerce'|'batch'}){
     }
   };
 
-  if(mode==='batch')return <Page title="Batch Upload" subtitle="Process multiple product images independently"><Card className="upload-card"><UploadCloud size={34}/><h2>Drop product images here</h2><p>Upload up to 20 JPG or PNG files. Each file receives its own compliance report.</p><input type="file" multiple/><button className="primary" onClick={submit}>Start batch processing</button></Card><Card><h3>Batch queue</h3>{['Aashirvaad packet.jpg','Oil bottle front.jpg','Maggi pack.jpg'].map((n,i)=><div className="batch-row" key={n}><FileImage size={17}/><b>{n}</b><span className={`badge ${i===2?'green':'amber'}`}>{i===2?'Done':'Pending'}</span>{i===2&&<button className="text-button" onClick={()=>go(`/scans/${scans[i].id}`)}>View report</button>}</div>)}</Card></Page>;
+  const startBatch=async()=>{
+    if(!batchFiles.length){setError('Select at least one image to start batch processing.');return}
+    setError('');
+    setBatchRunning(true);
+    const initial:BatchItem[]=batchFiles.map(f=>({file:f,status:'pending'}));
+    setBatchItems(initial);
+    await analyzeBatch(
+      batchFiles,
+      (index,item)=>{
+        setBatchItems(prev=>{
+          const next=[...prev];
+          next[index]=item;
+          return next;
+        });
+      },
+      packWidth?Number(packWidth):undefined,
+      packHeight?Number(packHeight):undefined,
+    );
+    setBatchRunning(false);
+  };
+
+  if(mode==='batch'){
+    const done=batchItems.filter(i=>i.status==='done').length;
+    const failed=batchItems.filter(i=>i.status==='failed').length;
+    const compliant=batchItems.filter(i=>i.scan?.overall_status==='compliant').length;
+    const review=batchItems.filter(i=>i.scan?.overall_status==='review_required'||i.scan?.overall_status==='non_compliant').length;
+
+    return <Page title="Batch Upload" subtitle="Process multiple product images independently">
+      <Card className="upload-card">
+        <UploadCloud size={34}/>
+        <h2>Drop product images here</h2>
+        <p>Upload up to 20 JPG or PNG files. Each file receives its own compliance report.</p>
+        <input
+          type="file"
+          multiple
+          accept="image/*"
+          onChange={e=>setBatchFiles(Array.from(e.target.files||[]).slice(0,20))}
+        />
+        {batchFiles.length>0&&<p>{batchFiles.length} file(s) selected</p>}
+        <div className="auth-two-col">
+          <label>Pack width (cm)<input placeholder="Optional — applies to all" value={packWidth} onChange={e=>setPackWidth(e.target.value)}/></label>
+          <label>Pack height (cm)<input placeholder="Optional — applies to all" value={packHeight} onChange={e=>setPackHeight(e.target.value)}/></label>
+        </div>
+        {error&&<div className="auth-error">{error}</div>}
+        <button className="primary" disabled={batchRunning} onClick={startBatch}>
+          {batchRunning?'Processing…':'Start batch processing'}
+        </button>
+      </Card>
+
+      {batchItems.length>0&&<Card>
+        <h3>Batch queue</h3>
+        {batchItems.map((item,i)=>
+          <div className="batch-row" key={i}>
+            <FileImage size={17}/>
+            <b>{item.file.name}</b>
+            <span className={`badge ${
+              item.status==='done'?(item.scan?.overall_status==='compliant'?'green':item.scan?.overall_status==='non_compliant'?'red':'amber')
+              :item.status==='failed'?'red'
+              :item.status==='processing'?'blue'
+              :'slate'
+            }`}>
+              {item.status==='done'?(item.scan?.overall_status==='compliant'?'Compliant':item.scan?.overall_status==='non_compliant'?'Non-Compliant':item.scan?.overall_status==='insufficient_image_quality'?'Quality Issue':'Review Required')
+              :item.status==='failed'?'Failed'
+              :item.status==='processing'?'Processing…'
+              :'Pending'}
+            </span>
+            {item.status==='done'&&item.scan&&<button className="text-button" onClick={()=>go(`/scans/${item.scan!.id}`)}>View report</button>}
+            {item.status==='failed'&&<small className="reason">{item.error}</small>}
+          </div>
+        )}
+        {!batchRunning&&batchItems.length>0&&<p className="batch-summary">
+          {done} done ({compliant} compliant, {review} flagged) · {failed} failed
+        </p>}
+      </Card>}
+    </Page>
+  }
 
   return <Page title={mode==='ecommerce'?'E-Commerce Scan':'New Image Scan'} subtitle={mode==='ecommerce'?'Check declarations on a product page':'Upload a product image for compliance analysis'}>
     <Card className="upload-card">
