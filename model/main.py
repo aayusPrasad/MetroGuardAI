@@ -149,109 +149,31 @@ def _run_pipeline(
         "preprocessing": merged_preprocessing,
     }
 
+
 @app.post("/analyze/image")
 async def analyze_image(
     file: UploadFile = File(...),
-    file2: UploadFile | None = File(None),
-    file3: UploadFile | None = File(None),
     manual_pack_width_cm: float | None = Form(None),
     manual_pack_height_cm: float | None = Form(None),
     is_molded: bool = Form(False),
 ) -> dict[str, Any]:
-    files = [f for f in [file, file2, file3] if f is not None]
-    
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=422, detail="Empty image.")
+
+    image = _decode_image(payload)
     dimensions = (
         (manual_pack_width_cm, manual_pack_height_cm)
         if (manual_pack_width_cm or manual_pack_height_cm)
         else None
     )
 
-    all_extractions = []
-    preprocessing_results = []
-
-    for f in files:
-        payload = await f.read()
-        if not payload:
-            continue
-        image = _decode_image(payload)
-        h, w, _ = image.shape
-
-        enhancement_meta = {
-            "image_enhancement_applied": False,
-            "original_resolution": f"{w}x{h}",
-            "enhancement_method": "none",
-        }
-        if min(h, w) < MIN_DIMENSION_PX:
-            try:
-                image, enhancement_meta = enhance_low_res_image(image)
-            except Exception:
-                continue  # skip this image if enhancement fails, try the others
-
-        stage_one = preprocess_image(image, pack_dimensions_cm=dimensions)
-        stage_two = extract_entities(stage_one["deskewed_image"], stage_one["pixels_per_cm"])
-
-        all_extractions.append(stage_two)
-        merged_prep = {k: v for k, v in stage_one.items() if k != "deskewed_image"}
-        merged_prep.update(enhancement_meta)
-        preprocessing_results.append(merged_prep)
-
-    if not all_extractions:
-        raise HTTPException(status_code=422, detail="No valid images could be processed.")
-
-    merged_extraction = merge_multi_image_extraction(all_extractions)
-
-    # Use the first successful image's calibration/PDP-area for the compliance
-    # check, since that's typically the primary/front-or-back panel photo.
-    primary_prep = preprocessing_results[0]
-
-    report = _engine().evaluate(
-        extraction=merged_extraction,
-        pdp_area_cm2=primary_prep.get("pdp_area_cm2"),
-        is_molded=is_molded,
-    )
-
-    return {
-        **report,
-        "is_molded": is_molded,
-        "preprocessing": primary_prep,
-        "images_processed": len(all_extractions),
-    }
+    try:
+        return _run_pipeline(image, dimensions, is_molded)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def merge_multi_image_extraction(extractions: list[dict[str, Any]]) -> dict[str, Any]:
-    """
-    Merge per-field extraction results across multiple images of the same
-    product. For each field, keep the result with the highest confidence
-    among images where it was actually found ("status": "found"); fall back
-    to "not_detected" only if no image found it at all.
-    """
-    field_names = [
-        "mrp", "unit_sale_price", "net_quantity", "manufacturing_date",
-        "expiry_date", "consumer_care", "manufacturer_packer_importer",
-        "country_of_origin", "generic_name",
-    ]
-    merged: dict[str, Any] = {}
-
-    for field in field_names:
-        candidates = [
-            ext[field] for ext in extractions
-            if field in ext and isinstance(ext[field], dict) and ext[field].get("status") in ("found", "blank")
-        ]
-        if candidates:
-            # Prefer a "found" with real content over a "blank" MRP-style hit;
-            # among same-status candidates, take highest confidence.
-            found = [c for c in candidates if c.get("status") == "found"]
-            best = max(found, key=lambda c: c.get("confidence", 0)) if found else candidates[0]
-            merged[field] = best
-        else:
-            merged[field] = {"value": None, "confidence": None, "bbox_height_mm": None, "status": "not_detected"}
-
-    # Combine all detections across images for confidence-averaging/logging
-    merged["detections"] = [
-        d for ext in extractions for d in ext.get("detections", [])
-    ]
-
-    return merged
 class EcommerceRequest(BaseModel):
     url: str
 
@@ -333,6 +255,7 @@ async def generate_report(
     manual_pack_width_cm: float | None = Form(None),
     manual_pack_height_cm: float | None = Form(None),
     is_molded: bool = Form(False),
+    format: str = Form("pdf"),  # "pdf" or "docx"
 ) -> FileResponse:
     payload = await file.read()
     if not payload:
@@ -350,11 +273,20 @@ async def generate_report(
     if result.get("overall_status") == "insufficient_image_quality":
         raise HTTPException(status_code=422, detail=result.get("message", "Image quality too low."))
 
+    if format == "docx":
+        from report_generator import generate_inspection_docx
+        with NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+            tmp_path = tmp.name
+        generate_inspection_docx(result, output_path=tmp_path)
+        return FileResponse(
+            path=tmp_path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename="MetroGuard_Inspection_Report.docx",
+        )
+
     with NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp_path = tmp.name
-
     generate_inspection_certificate(result, output_path=tmp_path)
-
     return FileResponse(
         path=tmp_path,
         media_type="application/pdf",
