@@ -11,6 +11,7 @@ export interface Scan {
   fields: Record<string, ScanField>; violations: { rule_ref: string; severity: Severity; description: string }[];
   not_detected_fields: string[]; preprocessing: { pixels_per_cm: number; pdp_area_cm2: number; calibration_method: 'manual_input' | 'marker_detected'; image_enhancement_applied: boolean; original_resolution: string; enhanced_resolution: string };
   image_url: string; message?: string;
+  __sourceFile?: File;
 }
 
 export const FIELD_LABELS: Record<string, string> = {
@@ -43,6 +44,33 @@ export const scans: Scan[] = products.map(([product_name, manufacturer], index) 
   return { id: `scan-2026-${String(892 - index).padStart(4, '0')}`, product_name, manufacturer, scan_date: dateFor(index), scan_type: is_ecommerce ? 'ecommerce' : 'physical', overall_status, is_ecommerce, is_molded: index % 4 === 0, usp_context: { required: !is_ecommerce, reason: is_ecommerce ? 'Unit sale price and font-size checks do not apply to e-commerce product pages.' : `USP calculated from MRP ₹${85 + index * 5} and net quantity ${500 + index * 10}g: ₹${(0.17 + index / 100).toFixed(2)} per 10g.` }, fields: makeFields(index, overall_status), violations, not_detected_fields: Object.entries(makeFields(index, overall_status)).filter(([, field]) => field.status === 'not_detected').map(([key]) => key), preprocessing: { pixels_per_cm: 118 + index, pdp_area_cm2: 420 + index * 8, calibration_method: index % 3 === 0 ? 'manual_input' : 'marker_detected', image_enhancement_applied: index % 2 === 0, original_resolution: '3024 × 4032 px', enhanced_resolution: '6048 × 8064 px' }, image_url: '', ...(overall_status === 'insufficient_image_quality' ? { message: 'The captured image resolution is 640 × 480 px, below the required minimum of 1280 × 720 px. Please recapture the product image with better lighting and focus.' } : {}) };
 });
 
+
+// --- LOCAL STORAGE PERSISTENCE LOGIC ---
+const SCANS_STORAGE_KEY = 'metroguard-scans';
+
+function loadPersistedScans(): Scan[] {
+  try {
+    const raw = localStorage.getItem(SCANS_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore corrupt storage */ }
+  return [];
+}
+
+export function persistScans() {
+  try {
+    localStorage.setItem(SCANS_STORAGE_KEY, JSON.stringify(scans));
+  } catch { /* storage full or unavailable — fail silently */ }
+}
+
+// Merge persisted real scans on initial load without duplicating seed data
+const persisted = loadPersistedScans();
+const seedIds = new Set(scans.map(s => s.id));
+for (const p of persisted) {
+  if (!seedIds.has(p.id)) scans.unshift(p);
+}
+// ---------------------------------------
+
+
 const wait = (ms = 520) => new Promise(resolve => setTimeout(resolve, ms));
 export interface ScanFilters { search?: string; status?: OverallStatus | 'all'; type?: ScanType | 'all' }
 export async function listScans(filters: ScanFilters = {}) { await wait(); const query = filters.search?.toLowerCase().trim() ?? ''; return scans.filter(scan => (!query || `${scan.id} ${scan.product_name} ${scan.manufacturer}`.toLowerCase().includes(query)) && (!filters.status || filters.status === 'all' || scan.overall_status === filters.status) && (!filters.type || filters.type === 'all' || scan.scan_type === filters.type)); }
@@ -67,9 +95,7 @@ export async function submitScan(payload: {
   } else if (payload.file) {
     next = await analyzeImage(payload.file, payload.packWidthCm, payload.packHeightCm, payload.isMolded);
   } else {
-    // Fallback to the old mock behavior — keeps the "Simulate insufficient
-    // image quality" toggle and batch-mode's placeholder submit working
-    // without a real file/url being provided.
+    // Fallback to the old mock behavior
     await wait(900);
     const template = scans[10];
     next = {
@@ -88,8 +114,39 @@ export async function submitScan(payload: {
 
   if (payload.productName) next.product_name = payload.productName;
   scans.unshift(next);
+  
+  // Save to localStorage so it persists across refreshes
+  persistScans(); 
+  
   return next;
 }
 
-export async function getReviewItems() { await wait(); return scans.flatMap(scan => scan.not_detected_fields.map(field => ({ scan, field }))).sort((a, b) => +new Date(b.scan.scan_date) - +new Date(a.scan.scan_date)); }
-export function resolveReview(scanId: string, fieldId: string, compliant: boolean) { const scan = scans.find(item => item.id === scanId); if (!scan) return; const field = scan.fields[fieldId]; if (field) { field.status = compliant ? 'compliant' : 'non_compliant'; field.reason = undefined; } scan.not_detected_fields = scan.not_detected_fields.filter(fieldName => fieldName !== fieldId); if (!compliant) { scan.overall_status = 'non_compliant'; scan.violations.push({ rule_ref: field?.rule_ref || 'LM-000', severity: 'major', description: `${FIELD_LABELS[fieldId]} requires enforcement action.` }); } else if (!scan.not_detected_fields.length && scan.overall_status === 'review_required') scan.overall_status = 'compliant'; }
+export async function getReviewItems() { 
+  await wait(); 
+  return scans
+    .flatMap(scan => scan.not_detected_fields.map(field => ({ scan, field })))
+    .sort((a, b) => new Date(b.scan.scan_date).getTime() - new Date(a.scan.scan_date).getTime()); 
+}
+
+export function resolveReview(scanId: string, fieldId: string, compliant: boolean) { 
+  const scan = scans.find(item => item.id === scanId); 
+  if (!scan) return; 
+  
+  const field = scan.fields[fieldId]; 
+  if (field) { 
+    field.status = compliant ? 'compliant' : 'non_compliant'; 
+    field.reason = undefined; 
+  } 
+  
+  scan.not_detected_fields = scan.not_detected_fields.filter(fieldName => fieldName !== fieldId); 
+  
+  if (!compliant) { 
+    scan.overall_status = 'non_compliant'; 
+    scan.violations.push({ rule_ref: field?.rule_ref || 'LM-000', severity: 'major', description: `${FIELD_LABELS[fieldId]} requires enforcement action.` }); 
+  } else if (!scan.not_detected_fields.length && scan.overall_status === 'review_required') {
+    scan.overall_status = 'compliant'; 
+  }
+  
+  // Save the manual override state to localStorage
+  persistScans(); 
+}
