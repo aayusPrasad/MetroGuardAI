@@ -87,6 +87,19 @@ export async function generateReport(
   if (packHeightCm) formData.append("manual_pack_height_cm", String(packHeightCm));
   if (isMolded !== undefined) formData.append("is_molded", String(isMolded));
 
+  // Automatically append the logged-in officer's name from session storage
+  const sessionData = localStorage.getItem('metroguard-session');
+  if (sessionData) {
+    try {
+      const session = JSON.parse(sessionData);
+      if (session?.name) {
+        formData.append("officer_name", session.name);
+      }
+    } catch (e) {
+      // Fallback if parsing fails
+    }
+  }
+
   const res = await fetch(`${API_BASE}/generate-report`, { method: "POST", body: formData });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Report generation failed" }));
@@ -120,6 +133,7 @@ export function downloadBlob(blob: Blob, filename: string) {
  */
 function normalizeApiScan(raw: any, sourceLabel: string, sourceFile?: File): Scan {
   const fields: Scan['fields'] = {};
+  
   for (const [key, field] of Object.entries<any>(raw.fields || {})) {
     let value = field.value;
     if (value && typeof value === 'object' && !Array.isArray(value) && 'amount' in value) {
@@ -138,13 +152,13 @@ function normalizeApiScan(raw: any, sourceLabel: string, sourceFile?: File): Sca
   return {
     id: `scan-${Date.now()}`,
     product_name: sourceLabel,
-    manufacturer: 'Unknown (pending manual entry)',
+    manufacturer: raw.manufacturer || 'Unknown (pending manual entry)',
     scan_date: new Date().toISOString(),
     scan_type: raw.is_ecommerce ? 'ecommerce' : 'physical',
     overall_status: raw.overall_status,
     is_ecommerce: raw.is_ecommerce,
     is_molded: raw.is_molded,
-    usp_context: raw.usp_context,
+    usp_context: raw.usp_context || { required: false, reason: '' },
     fields,
     violations: (raw.violations || []).map((v: any) => ({
       rule_ref: v.rule_ref,
