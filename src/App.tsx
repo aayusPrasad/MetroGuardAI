@@ -27,17 +27,16 @@ function SeverityChart(){const data=useMemo(()=>{const c={critical:0,major:0,min
 function ComplianceChart(){const data=useMemo(()=>{const weeks=['W31','W32','W33','W34','W35','W36','W37','W38'];const base=[72,68,75,70,78,73,82,79];return weeks.map((w,i)=>({week:w,Compliant:base[i],NonCompliant:100-base[i]}));},[]);return <ResponsiveContainer width="100%" height={200}><LineChart data={data} margin={{top:10,right:20,left:0,bottom:5}}><CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false}/><XAxis dataKey="week" tick={{fontSize:11,fill:CHART.axis}} axisLine={{stroke:CHART.grid}} tickLine={false}/><YAxis domain={[0,100]} tick={{fontSize:12,fill:CHART.axis}} axisLine={false} tickLine={false} unit="%"/><Tooltip contentStyle={{background:CHART.tooltipBg,border:'none',borderRadius:6,color:'#fff',fontSize:12}} labelStyle={{color:'#fff'}} cursor={{stroke:CHART.grid}}/><Legend wrapperStyle={{fontSize:11,color:'#617180'}} iconType="plainline"/><Line type="monotone" dataKey="Compliant" stroke={CHART.compliant} strokeWidth={2.5} dot={{r:3,fill:CHART.compliant}} activeDot={{r:5}}/><Line type="monotone" dataKey="NonCompliant" stroke={CHART.nonCompliant} strokeWidth={2.5} dot={{r:3,fill:CHART.nonCompliant}} activeDot={{r:5}}/></LineChart></ResponsiveContainer>}
 function RuleRefChart(){const data=useMemo(()=>{const m=new Map<string,number>();scans.forEach(s=>s.violations.forEach(v=>m.set(v.rule_ref,(m.get(v.rule_ref)||0)+1)));return Array.from(m.entries()).map(([rule,count])=>({rule,count})).sort((a,b)=>b.count-a.count);},[scans.length]);return <ResponsiveContainer width="100%" height={200}><BarChart data={data} margin={{top:10,right:20,left:0,bottom:5}} layout="vertical"><CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} horizontal={false}/><XAxis type="number" allowDecimals={false} tick={{fontSize:12,fill:CHART.axis}} axisLine={false} tickLine={false}/><YAxis type="category" dataKey="rule" tick={{fontSize:12,fill:CHART.axis}} axisLine={{stroke:CHART.grid}} tickLine={false} width={70}/><Tooltip contentStyle={{background:CHART.tooltipBg,border:'none',borderRadius:6,color:'#fff',fontSize:12}} labelStyle={{color:'#fff'}} cursor={{fill:'rgba(40,121,197,0.05)'}}/><Bar dataKey="count" name="Violations" fill={CHART.major} radius={[0,6,6,0]}/></BarChart></ResponsiveContainer>}
 function ScanTable({rows,compact=false}:{rows:Scan[];compact?:boolean}){return <Card className="table-card"><div className="table-wrap"><table><thead><tr><th>SCAN ID</th><th>PRODUCT / MANUFACTURER</th><th>SCAN DATE</th><th>STATUS</th><th>VIOLATIONS</th><th>CONFIDENCE</th><th>TYPE</th></tr></thead><tbody>{rows.map(s=><tr key={s.id} onClick={()=>go(`/scans/${s.id}`)}><td className="link">{s.id}</td><td><b>{s.product_name}</b><small>{s.manufacturer}</small></td><td>{fmt(s.scan_date)}</td><td><StatusBadge status={s.overall_status}/></td><td>{s.violations.length?s.violations.map(v=><SeverityBadge key={v.rule_ref} severity={v.severity}/>):<span className="muted">—</span>}</td><td><span className="confidence">{Math.round(Object.values(s.fields).reduce((a,f)=>a+f.confidence,0)/(Object.values(s.fields).length||1)*100)}%</span></td><td><span className="type-pill">{s.is_ecommerce?'E-Commerce':'Physical'}</span></td></tr>)}</tbody></table></div>{!compact&&<div className="table-foot">Showing <b>1–{rows.length}</b> of {rows.length} scans <button>‹ Prev</button><button className="page-num">1</button><button>Next ›</button></div>}</Card>}
+
 function Dashboard() {
   const [period, setPeriod] = useState<'7d' | '30d' | 'custom'>('30d');
 
-  // Filter scans based on the selected period
   const filteredScans = useMemo(() => {
     if (period === '7d') {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      return scans.filter(s => new Date(s.scan_date) >= sevenDaysAgo);
+      return scans.filter(s => new Date(s.scan_date).getTime() >= sevenDaysAgo.getTime());
     }
-    // Default to Last 30 Days (or all available seed data)
     return scans;
   }, [period]);
 
@@ -87,173 +86,236 @@ function Dashboard() {
     </Page>
   );
 }
+
 function Scans(){const [rows,setRows]=useState<Scan[]>([]);const [filter,setFilter]=useState<ScanFilters>({status:'all',type:'all'});const load=()=>listScans(filter).then(setRows);useEffect(()=>{load()},[filter.search,filter.status,filter.type]);return <Page title="Scan Search & History" subtitle={`${rows.length} scans found`} actions={<button className="secondary"><FileDown size={15}/> Export CSV</button>}><div className="history-layout"><Card className="filters"><b>FILTERS</b><label>Search<small>Product name, manufacturer, or scan ID</small><div className="input-icon"><Search size={15}/><input placeholder="Search scans..." value={filter.search||''} onChange={e=>setFilter({...filter,search:e.target.value})}/></div></label><label>Status<select value={filter.status} onChange={e=>setFilter({...filter,status:e.target.value as OverallStatus|'all'})}><option value="all">All statuses</option><option value="compliant">Compliant</option><option value="non_compliant">Non-Compliant</option><option value="review_required">Review Required</option><option value="insufficient_image_quality">Quality Issue</option></select></label><label>Type<select value={filter.type} onChange={e=>setFilter({...filter,type:e.target.value as ScanFilters['type']})}><option value="all">All types</option><option value="physical">Physical</option><option value="ecommerce">E-Commerce</option></select></label><label>Date range<input type="date"/><input type="date"/></label></Card><ScanTable rows={rows}/></div></Page>}
+
 function Detail({id}:{id:string}){
-  const [scan,setScan]=useState<Scan|null>(null);
-  const [tech,setTech]=useState(false);
-  const [downloading,setDownloading]=useState<'pdf'|'docx'|null>(null);
-  const [downloadError,setDownloadError]=useState('');
-  useEffect(()=>{getScanById(id).then(setScan)},[id]);
-  if(!scan)return <Page title="Loading scan…"><Card className="skeleton big"><div style={{padding:'40px'}}/></Card></Page>;
+  const [scan,setScan]=useState<Scan|null>(null);
+  const [tech,setTech]=useState(false);
+  const [downloading,setDownloading]=useState<'pdf'|'docx'|null>(null);
+  const [downloadError,setDownloadError]=useState('');
+  
+  useEffect(()=>{getScanById(id).then(setScan)},[id]);
+  
+  if(!scan)return <Page title="Loading scan…"><Card className="skeleton big"><div style={{padding:'40px'}}/></Card></Page>;
 
-  const download=async(format:'pdf'|'docx')=>{
-    setDownloadError('');
-    setDownloading(format);
-    try{
-      const sourceFile=scan.__sourceFile||await getFile(scan.id);
-      if(!sourceFile){
-        setDownloadError('Original image not available for this scan — cannot regenerate the report. This can happen for older scans or after the browser session has been cleared.');
-        setDownloading(null);
-        return;
-      }
-      const blob=await generateReport(sourceFile,format);
-      downloadBlob(blob,`MetroGuard_Inspection_Report.${format}`);
-    }catch(e){
-      setDownloadError(e instanceof Error?e.message:'Report generation failed.');
-    }
-    setDownloading(null);
-  };
+  const download=async(format:'pdf'|'docx')=>{
+    setDownloadError('');
+    setDownloading(format);
+    try{
+      const sourceFile=scan.__sourceFile||await getFile(scan.id);
+      if(!sourceFile){
+        setDownloadError('Original image not available for this scan — cannot regenerate the report. This can happen for older scans or after the browser session has been cleared.');
+        setDownloading(null);
+        return;
+      }
+      const blob=await generateReport(sourceFile,format);
+      downloadBlob(blob,`MetroGuard_Inspection_Report.${format}`);
+    }catch(e){
+      setDownloadError(e instanceof Error?e.message:'Report generation failed.');
+    }
+    setDownloading(null);
+  };
 
-  return <Page title={scan.product_name} subtitle={`${scan.manufacturer} · ${fmt(scan.scan_date)} · ${scan.id}`} actions={<><StatusBadge status={scan.overall_status}/><button className="primary" disabled={downloading==='pdf'} onClick={()=>download('pdf')}><FileDown size={15}/> {downloading==='pdf'?'Generating…':'Download PDF'}</button><button className="secondary" disabled={downloading==='docx'} onClick={()=>download('docx')}><FileText size={15}/> {downloading==='docx'?'Generating…':'Download DOCX'}</button></>}><div className="detail-grid"><Card className="product-panel"><div className="mock-pack"><span>METRO<br/><b>GUARD</b></span><strong>{scan.product_name.split(' ').slice(0,3).join(' ')}</strong><small>LEGAL METROLOGY CHECK</small><i>₹{85 + Number(scan.id.slice(-2))}</i></div><div className="zoom"><button>−</button><span>100%</span><button>+</button></div></Card><Card className="fields"><h3>Declaration Field Breakdown</h3>{downloadError&&<div className="auth-error">{downloadError}</div>}{scan.is_ecommerce&&<div className="info-banner"><Activity size={17}/><span><b>E-Commerce scan</b> Font-size, placement, and physical pack checks do not apply. Only declaration presence has been assessed.</span></div>}{scan.overall_status==='insufficient_image_quality'?<div className="quality-state"><AlertTriangle size={28}/><h3>Image quality insufficient</h3><p>{scan.message}</p><button className="primary" onClick={()=>go('/scans/new')}>Recapture and retry</button></div>:<div className="field-list">{Object.entries(scan.fields).map(([key,f])=><div className={`field ${f.status==='not_detected'?'not-detected':''}`} key={key}><div className="field-head"><b>{FIELD_LABELS[key]}</b><StatusBadge status={f.status==='compliant'?'compliant':f.status==='non_compliant'?'non_compliant':'review_required'}/></div>{f.status==='not_detected'?<p className="reason">{f.reason}</p>:<><strong>{typeof f.value==='object'?Array.isArray(f.value)?f.value.join(' · '):'amount' in f.value?`₹${f.value.amount} ${f.value.unit||''}${f.value.inclusive_of_all_taxes?' · inclusive of all taxes':''}`:JSON.stringify(f.value):f.value}</strong><small>Confidence {Math.round(f.confidence*100)}% · Rule reference <span className="link">{f.rule_ref}</span></small></>}</div>)}</div>}{scan.usp_context.required&&<div className="usp"><Gauge size={18}/><div><b>Unit Sale Price (USP)</b><p>{scan.usp_context.reason}</p></div></div>}</Card></div><Card><div className="card-title"><div><h3>Violations</h3><p>{scan.violations.length?'Detected issues requiring attention':'No violations identified'}</p></div></div>{scan.violations.map(v=><div className="violation" key={v.rule_ref}><SeverityBadge severity={v.severity}/><div><b>{v.rule_ref}</b><p>{v.description}</p></div></div>)}</Card><Card className="technical"><button onClick={()=>setTech(!tech)}><SlidersHorizontal size={16}/><b>Technical Calibration Details</b><ChevronDown className={tech?'rotate':''} size={16}/></button>{tech&&<div className="tech-grid">{Object.entries(scan.preprocessing).map(([k,v])=><div key={k}><small>{k.replace(/_/g,' ')}</small><b>{String(v)}</b></div>)}</div>}</Card></Page>}
+  // Helper to ensure values safely format without prepending rogue ₹ signs
+  const formatFieldValue = (key: string, value: any) => {
+    if (!value) return '—';
+    if (typeof value === 'object') {
+      if (Array.isArray(value)) return value.join(' · ');
+      if ('amount' in value) {
+        // Strip any existing currency symbols the OCR might have mistakenly grabbed
+        const cleanAmount = String(value.amount).replace(/[₹Rs\s]/gi, '').trim();
+        if (key === 'mrp' || key === 'unit_sale_price') {
+          return `₹${cleanAmount} ${value.unit || ''}${value.inclusive_of_all_taxes ? ' · inclusive of all taxes' : ''}`.trim();
+        }
+        return `${cleanAmount} ${value.unit || ''}`.trim();
+      }
+      return JSON.stringify(value);
+    }
+    return String(value).replace(/[₹Rs]/gi, ''); // Global safety strip for generic strings
+  };
+
+  // Pull actual MRP from the scanned fields for the mock package placeholder
+  const getMockPackMrp = () => {
+    const mrpField = scan.fields['mrp'];
+    if (mrpField?.value && typeof mrpField.value === 'object' && 'amount' in mrpField.value) {
+      return String(mrpField.value.amount).replace(/[₹Rs\s]/gi, '').trim();
+    }
+    const fallbackId = Number(scan.id.slice(-2));
+    return isNaN(fallbackId) ? 85 : 85 + fallbackId;
+  };
+
+  return <Page title={scan.product_name} subtitle={`${scan.manufacturer} · ${fmt(scan.scan_date)} · ${scan.id}`} actions={<><StatusBadge status={scan.overall_status}/><button className="primary" disabled={downloading==='pdf'} onClick={()=>download('pdf')}><FileDown size={15}/> {downloading==='pdf'?'Generating…':'Download PDF'}</button><button className="secondary" disabled={downloading==='docx'} onClick={()=>download('docx')}><FileText size={15}/> {downloading==='docx'?'Generating…':'Download DOCX'}</button></>}><div className="detail-grid">
+    <Card className="product-panel">
+  {scan.__sourceFile && typeof scan.__sourceFile === 'object'
+    ? <img src={URL.createObjectURL(scan.__sourceFile as File)} alt={scan.product_name} className="scan-image" style={{width: '100%', borderRadius: '6px', objectFit: 'contain', maxHeight: '420px'}}/>
+    : scan.image_url 
+      ? <img src={scan.image_url} alt={scan.product_name} className="scan-image" style={{width: '100%', borderRadius: '6px', objectFit: 'contain', maxHeight: '420px'}}/>
+      : <div className="mock-pack"><span>METRO<br/><b>GUARD</b></span><strong>{scan.product_name.split(' ').slice(0,3).join(' ')}</strong><small>LEGAL METROLOGY CHECK</small><i>₹{getMockPackMrp()}</i></div>}
+  <div className="zoom"><button>−</button><span>100%</span><button>+</button></div>
+</Card>
+    
+    <Card className="fields">
+      <h3>Declaration Field Breakdown</h3>
+      {downloadError&&<div className="auth-error">{downloadError}</div>}
+      {scan.is_ecommerce&&<div className="info-banner"><Activity size={17}/><span><b>E-Commerce scan</b> Font-size, placement, and physical pack checks do not apply. Only declaration presence has been assessed.</span></div>}
+      {scan.overall_status==='insufficient_image_quality'?<div className="quality-state"><AlertTriangle size={28}/><h3>Image quality insufficient</h3><p>{scan.message}</p><button className="primary" onClick={()=>go('/scans/new')}>Recapture and retry</button></div>:<div className="field-list">{Object.entries(scan.fields).map(([key,f])=><div className={`field ${f.status==='not_detected'?'not-detected':''}`} key={key}><div className="field-head"><b>{FIELD_LABELS[key]}</b><StatusBadge status={f.status==='compliant'?'compliant':f.status==='non_compliant'?'non_compliant':'review_required'}/></div>{f.status==='not_detected'?<p className="reason">{f.reason}</p>:<><strong>{formatFieldValue(key, f.value)}</strong><small>Confidence {Math.round(f.confidence*100)}% · Rule reference <span className="link">{f.rule_ref}</span></small></>}</div>)}</div>}
+      {scan.usp_context?.required&&<div className="usp"><Gauge size={18}/><div><b>Unit Sale Price (USP)</b><p>{scan.usp_context.reason}</p></div></div>}
+    </Card>
+  </div><Card><div className="card-title"><div><h3>Violations</h3><p>{scan.violations.length?'Detected issues requiring attention':'No violations identified'}</p></div></div>{scan.violations.map(v=><div className="violation" key={v.rule_ref}><SeverityBadge severity={v.severity}/><div><b>{v.rule_ref}</b><p>{v.description}</p></div></div>)}</Card><Card className="technical"><button onClick={()=>setTech(!tech)}><SlidersHorizontal size={16}/><b>Technical Calibration Details</b><ChevronDown className={tech?'rotate':''} size={16}/></button>{tech&&<div className="tech-grid">{Object.entries(scan.preprocessing).map(([k,v])=><div key={k}><small>{k.replace(/_/g,' ')}</small><b>{String(v)}</b></div>)}</div>}</Card></Page>}
+
 function NewScan({mode='image'}:{mode?:'image'|'ecommerce'|'batch'}){
-  const [name,setName]=useState('');
-  const [url,setUrl]=useState('');
-  const [file,setFile]=useState<File|null>(null);
-  const [packWidth,setPackWidth]=useState('');
-  const [packHeight,setPackHeight]=useState('');
-  const [processing,setProcessing]=useState(false);
-  const [step,setStep]=useState(0);
-  const [issue,setIssue]=useState(false);
-  const [error,setError]=useState('');
+  const [name,setName]=useState('');
+  const [url,setUrl]=useState('');
+  const [file,setFile]=useState<File|null>(null);
+  const [packWidth,setPackWidth]=useState('');
+  const [packHeight,setPackHeight]=useState('');
+  const [processing,setProcessing]=useState(false);
+  const [step,setStep]=useState(0);
+  const [issue,setIssue]=useState(false);
+  const [error,setError]=useState('');
 
-  const [batchFiles,setBatchFiles]=useState<File[]>([]);
-  const [batchItems,setBatchItems]=useState<BatchItem[]>([]);
-  const [batchRunning,setBatchRunning]=useState(false);
+  const [batchFiles,setBatchFiles]=useState<File[]>([]);
+  const [batchItems,setBatchItems]=useState<BatchItem[]>([]);
+  const [batchRunning,setBatchRunning]=useState(false);
 
-  const submit=async()=>{
-    setError('');
-    if(mode==='ecommerce'&&!/^https?:\/\//.test(url))return;
-    if(mode==='image'&&!file){setError('Select a product image before starting the scan.');return}
-    setProcessing(true);
-    for(let i=1;i<5;i++){await new Promise(r=>setTimeout(r,500));setStep(i)}
-    try{
-      const s=await submitScan({
-        productName:name||undefined,
-        ecommerce:mode==='ecommerce',
-        qualityIssue:issue,
-        file:file||undefined,
-        url:mode==='ecommerce'?url:undefined,
-        packWidthCm:packWidth?Number(packWidth):undefined,
-        packHeightCm:packHeight?Number(packHeight):undefined,
-      });
-      setProcessing(false);
-      go(`/scans/${s.id}`)
-    }catch(e){
-      setProcessing(false);
-      setError(e instanceof Error?e.message:'Scan failed. Check the backend is running and try again.');
-    }
-  };
+  const submit=async()=>{
+    setError('');
+    if(mode==='ecommerce'&&!/^https?:\/\//.test(url)){setError('Please enter a valid product page URL (http:// or https://)');return;}
+    if(mode==='image'&&!file){setError('Please select or drop a product image before starting the scan.');return}
+    setProcessing(true);
+    for(let i=1;i<5;i++){await new Promise(r=>setTimeout(r,400));setStep(i)}
+    try{
+      const s=await submitScan({
+        productName:name||undefined,
+        ecommerce:mode==='ecommerce',
+        qualityIssue:issue,
+        file:file||undefined,
+        url:mode==='ecommerce'?url:undefined,
+        packWidthCm:packWidth?Number(packWidth):undefined,
+        packHeightCm:packHeight?Number(packHeight):undefined,
+      });
+      setProcessing(false);
+      go(`/scans/${s.id}`)
+    }catch(e){
+      setProcessing(false);
+      setError(e instanceof Error?e.message:'Scan failed. Check the backend is running and try again.');
+    }
+  };
 
-  const startBatch=async()=>{
-    if(!batchFiles.length){setError('Select at least one image to start batch processing.');return}
-    setError('');
-    setBatchRunning(true);
-    const initial:BatchItem[]=batchFiles.map(f=>({file:f,status:'pending'}));
-    setBatchItems(initial);
-    await analyzeBatch(
-      batchFiles,
-      (index,item)=>{
-        setBatchItems(prev=>{
-          const next=[...prev];
-          next[index]=item;
-          return next;
-        });
-      },
-      packWidth?Number(packWidth):undefined,
-      packHeight?Number(packHeight):undefined,
-    );
-    setBatchRunning(false);
-  };
+  const startBatch=async()=>{
+    if(!batchFiles.length){setError('Select at least one image to start batch processing.');return}
+    setError('');
+    setBatchRunning(true);
+    const initial:BatchItem[]=batchFiles.map(f=>({file:f,status:'pending'}));
+    setBatchItems(initial);
+    await analyzeBatch(
+      batchFiles,
+      (index,item)=>{
+        setBatchItems(prev=>{
+          const next=[...prev];
+          next[index]=item;
+          return next;
+        });
+      },
+      packWidth?Number(packWidth):undefined,
+      packHeight?Number(packHeight):undefined,
+    );
+    setBatchRunning(false);
+  };
 
-  if(mode==='batch'){
-    const done=batchItems.filter(i=>i.status==='done').length;
-    const failed=batchItems.filter(i=>i.status==='failed').length;
-    const compliant=batchItems.filter(i=>i.scan?.overall_status==='compliant').length;
-    const review=batchItems.filter(i=>i.scan?.overall_status==='review_required'||i.scan?.overall_status==='non_compliant').length;
+  if(mode==='batch'){
+    const done=batchItems.filter(i=>i.status==='done').length;
+    const failed=batchItems.filter(i=>i.status==='failed').length;
+    const compliant=batchItems.filter(i=>i.scan?.overall_status==='compliant').length;
+    const review=batchItems.filter(i=>i.scan?.overall_status==='review_required'||i.scan?.overall_status==='non_compliant').length;
 
-    return <Page title="Batch Upload" subtitle="Process multiple product images independently">
-      <Card className="upload-card">
-        <UploadCloud size={34}/>
-        <h2>Drop product images here</h2>
-        <p>Upload up to 20 JPG or PNG files. Each file receives its own compliance report.</p>
-        <input
-          type="file"
-          multiple
-          accept="image/*"
-          onChange={e=>setBatchFiles(Array.from(e.target.files||[]).slice(0,20))}
-        />
-        {batchFiles.length>0&&<p>{batchFiles.length} file(s) selected</p>}
-        <div className="auth-two-col">
-          <label>Pack width (cm)<input placeholder="Optional — applies to all" value={packWidth} onChange={e=>setPackWidth(e.target.value)}/></label>
-          <label>Pack height (cm)<input placeholder="Optional — applies to all" value={packHeight} onChange={e=>setPackHeight(e.target.value)}/></label>
-        </div>
-        {error&&<div className="auth-error">{error}</div>}
-        <button className="primary" disabled={batchRunning} onClick={startBatch}>
-          {batchRunning?'Processing…':'Start batch processing'}
-        </button>
-      </Card>
+    return <Page title="Batch Compliance Queue" subtitle="Process multiple retail package images concurrently">
+      <Card className="upload-card">
+        <UploadCloud size={34}/>
+        <h2>Drop batch package images here</h2>
+        <p>Upload up to 20 JPG or PNG files. Each file receives its own compliance report.</p>
+        <input
+          type="file"
+          multiple
+          accept="image/*"
+          onChange={e=>setBatchFiles(Array.from(e.target.files||[]).slice(0,20))}
+        />
+        {batchFiles.length>0&&<p>{batchFiles.length} file(s) selected</p>}
+        <div className="auth-two-col" style={{marginTop: '15px'}}>
+          <label>Pack width (cm)<input placeholder="Optional — applies to all" value={packWidth} onChange={e=>setPackWidth(e.target.value)}/></label>
+          <label>Pack height (cm)<input placeholder="Optional — applies to all" value={packHeight} onChange={e=>setPackHeight(e.target.value)}/></label>
+        </div>
+        {error&&<div className="auth-error">{error}</div>}
+        <button className="primary wide" style={{marginTop: '15px'}} disabled={batchRunning||!batchFiles.length} onClick={startBatch}>
+          {batchRunning?'Processing Batch…':'Start Batch Verification'}
+        </button>
+      </Card>
 
-      {batchItems.length>0&&<Card>
-        <h3>Batch queue</h3>
-        {batchItems.map((item,i)=>
-          <div className="batch-row" key={i}>
-            <FileImage size={17}/>
-            <b>{item.file.name}</b>
-            <span className={`badge ${
-              item.status==='done'?(item.scan?.overall_status==='compliant'?'green':item.scan?.overall_status==='non_compliant'?'red':'amber')
-              :item.status==='failed'?'red'
-              :item.status==='processing'?'blue'
-              :'slate'
-            }`}>
-              {item.status==='done'?(item.scan?.overall_status==='compliant'?'Compliant':item.scan?.overall_status==='non_compliant'?'Non-Compliant':item.scan?.overall_status==='insufficient_image_quality'?'Quality Issue':'Review Required')
-              :item.status==='failed'?'Failed'
-              :item.status==='processing'?'Processing…'
-              :'Pending'}
-            </span>
-            {item.status==='done'&&item.scan&&<button className="text-button" onClick={()=>go(`/scans/${item.scan!.id}`)}>View report</button>}
-            {item.status==='failed'&&<small className="reason">{item.error}</small>}
-          </div>
-        )}
-        {!batchRunning&&batchItems.length>0&&<p className="batch-summary">
-          {done} done ({compliant} compliant, {review} flagged) · {failed} failed
-        </p>}
-      </Card>}
-    </Page>
-  }
+      {batchItems.length>0&&<Card>
+        <h3>Batch Execution Status</h3>
+        {batchItems.map((item,i)=>
+          <div className="batch-row" key={i}>
+            <FileImage size={17}/>
+            <b>{item.file.name}</b>
+            <span className={`badge ${
+              item.status==='done'?(item.scan?.overall_status==='compliant'?'green':item.scan?.overall_status==='non_compliant'?'red':'amber')
+              :item.status==='failed'?'red'
+              :item.status==='processing'?'blue'
+              :'slate'
+            }`}>
+              {item.status==='done'?(item.scan?.overall_status==='compliant'?'Compliant':item.scan?.overall_status==='non_compliant'?'Non-Compliant':item.scan?.overall_status==='insufficient_image_quality'?'Quality Issue':'Review Required')
+              :item.status==='failed'?'Failed'
+              :item.status==='processing'?'Processing…'
+              :'Pending'}
+            </span>
+            {item.status==='done'&&item.scan&&<button className="text-button" onClick={()=>go(`/scans/${item.scan!.id}`)}>View report</button>}
+            {item.status==='failed'&&<small className="reason">{item.error}</small>}
+          </div>
+        )}
+      </Card>}
+    </Page>
+  }
 
-  return <Page title={mode==='ecommerce'?'E-Commerce Scan':'New Image Scan'} subtitle={mode==='ecommerce'?'Check declarations on a product page':'Upload a product image for compliance analysis'}>
-    <Card className="upload-card">
-      <div className="upload-icon"><UploadCloud size={30}/></div>
-      <h2>{mode==='ecommerce'?'Enter product page URL':'Drop a product image here'}</h2>
-      <p>{mode==='ecommerce'?'Only declaration-presence checks apply to e-commerce pages.':'JPG or PNG · Recommended minimum 1280 × 720 px'}</p>
-      {mode==='ecommerce'
-        ?<input className="url-input" placeholder="https://example.com/product" value={url} onChange={e=>setUrl(e.target.value)}/>
-        :<>
-          <input type="file" accept="image/*" onChange={e=>setFile(e.target.files?.[0]||null)}/>
-          <div className="mock-preview"><FileImage size={24}/><span>{file?file.name:'Product image preview will appear here'}</span></div>
-        </>}
-      {mode==='image'&&<div className="auth-two-col">
-        <label>Pack width (cm)<input placeholder="Optional" value={packWidth} onChange={e=>setPackWidth(e.target.value)}/></label>
-        <label>Pack height (cm)<input placeholder="Optional" value={packHeight} onChange={e=>setPackHeight(e.target.value)}/></label>
-      </div>}
-      <label>Product name <input placeholder="Optional label for this scan" value={name} onChange={e=>setName(e.target.value)}/></label>
-      <button className="secondary" onClick={()=>setIssue(!issue)}>{issue?'Quality issue simulation enabled':'Simulate insufficient image quality'}</button>
-      {error&&<div className="auth-error">{error}</div>}
-      <button className="primary wide" disabled={processing} onClick={submit}>{processing?'Processing…':'Start scan'}</button>
-      {processing&&<div className="steps">{['Uploading','Calibrating','Extracting','Checking rules','Generating report'].map((s,i)=><div className={i<=step?'done':''} key={s}><span>{i<step?'✓':i===step?'…':i+1}</span>{s}</div>)}</div>}
-    </Card>
-  </Page>
+  return <Page title={mode==='ecommerce'?'E-Commerce Scan':'New Image Scan'} subtitle={mode==='ecommerce'?'Check declarations on a product page':'Upload a product image for compliance analysis'}>
+    <Card className="upload-card">
+      <div className="upload-icon"><UploadCloud size={30}/></div>
+      <h2>{mode==='ecommerce'?'Enter product page URL':'Drop a product image here'}</h2>
+      <p>{mode==='ecommerce'?'Only declaration-presence checks apply to e-commerce pages.':'JPG or PNG · Recommended minimum 1280 × 720 px'}</p>
+      
+      {mode==='ecommerce'
+        ? <input className="url-input" placeholder="https://example.com/product" value={url} onChange={e=>setUrl(e.target.value)}/>
+        : <>
+            <input type="file" accept="image/*" onChange={e=>setFile(e.target.files?.[0]||null)}/>
+            <div className="mock-preview"><FileImage size={24}/><span>{file?file.name:'Product image preview will appear here'}</span></div>
+          </>
+      }
+
+      {mode==='image'&&<div className="auth-two-col" style={{textAlign: 'left', marginTop: '15px'}}>
+        <label>Pack width (cm)<input placeholder="Optional" value={packWidth} onChange={e=>setPackWidth(e.target.value)}/></label>
+        <label>Pack height (cm)<input placeholder="Optional" value={packHeight} onChange={e=>setPackHeight(e.target.value)}/></label>
+      </div>}
+
+      <label style={{textAlign: 'left', marginTop: '15px', display: 'block'}}>
+        Product name 
+        <input placeholder="Optional label for this scan" value={name} onChange={e=>setName(e.target.value)}/>
+      </label>
+
+      <button className="secondary wide" style={{marginTop: '15px'}} onClick={()=>setIssue(!issue)}>
+        {issue?'Quality issue simulation enabled':'Simulate insufficient image quality'}
+      </button>
+
+      {error&&<div className="auth-error">{error}</div>}
+
+      <button className="primary wide" style={{marginTop: '15px'}} disabled={processing} onClick={submit}>
+        {processing?'Processing…':'Start scan'}
+      </button>
+
+      {processing&&<div className="steps">{['Uploading','Calibrating','Extracting','Checking rules','Generating report'].map((s,i)=><div className={i<=step?'done':''} key={s}><span>{i<step?'✓':i===step?'…':i+1}</span>{s}</div>)}</div>}
+    </Card>
+  </Page>
 }
+
 function Review(){const [items,setItems]=useState<{scan:Scan;field:string}[]>([]);const load=()=>getReviewItems().then(setItems);useEffect(()=>{load()},[]);return <Page title="Manual Review Queue" subtitle={`${items.length} fields awaiting officer confirmation`}><Card className="review-card">{items.length?items.map(item=><div className="review-row" key={`${item.scan.id}-${item.field}`}><div><b>{FIELD_LABELS[item.field]}</b><small>{item.scan.product_name} · {item.scan.id}</small></div><span className="confidence">{Math.round(item.scan.fields[item.field]?.confidence*100||0)}%</span><button className="approve" onClick={()=>{resolveReview(item.scan.id,item.field,true);load()}}>Confirm Compliant</button><button className="reject" onClick={()=>{resolveReview(item.scan.id,item.field,false);load()}}>Confirm Violation</button></div>):<div className="empty"><CheckCircle2 size={30}/><h3>Queue cleared</h3><p>No fields need manual confirmation.</p></div>}</Card></Page>}
 function Analytics(){return <Page title="Analytics & Insights" subtitle="Trends across all legal metrology inspections"><div className="chart-grid"><Card><div className="card-title"><div><h3>Violations by Rule Reference</h3><p>Most frequently triggered rules</p></div></div><RuleRefChart/></Card><Card><div className="card-title"><div><h3>Compliance Rate Over Time</h3><p>Weekly outcome trend</p></div></div><ComplianceChart/></Card></div><Card><div className="card-title"><div><h3>Manufacturers ranked by violation count</h3><p>Top offenders by total violations</p></div></div>{scans.slice(0,8).map((s,i)=><div className="rank-row" key={s.manufacturer}><span>{i+1}</span><b>{s.manufacturer}</b><small>{s.violations.length+ i} violations</small><div className="rank-bar"><i style={{width:`${70-i*7}%`}}/></div></div>)}</Card></Page>}
 function UsersAdmin(){return <Page title="User Management" subtitle="Manage dashboard access"><Card className="table-card"><div className="table-wrap"><table><thead><tr><th>USER</th><th>ROLE</th><th>ASSIGN ROLE</th></tr></thead><tbody>{['Rajesh Kumar Sharma','Ananya Mehta','Vikram Singh'].map((u,i)=><tr key={u}><td><div className="user-cell"><div className="avatar">{u[0]}</div><div><b>{u}</b><small>{i?'South Zone Inspector':'North Zone Officer'}</small></div></div></td><td><span className={`badge ${i?'blue':'green'}`}>{i?'Officer':'Admin'}</span></td><td><select className="role-select" defaultValue={i?'officer':'admin'}><option value="admin">Admin</option><option value="officer">Officer</option></select></td></tr>)}</tbody></table></div></Card></Page>}
@@ -264,5 +326,3 @@ function Login(){const [mode,setMode]=useState<'signin'|'signup'>(new URLSearchP
 const signIn=(demoRole?:UserRole)=>{const finalEmail=demoRole==='admin'?'admin@metroguard.gov.in':demoRole==='officer'?'officer@metroguard.gov.in':email;const finalPassword=demoRole==='admin'?'Admin@2026':demoRole==='officer'?'Officer@2026':password;if(!finalEmail||!finalPassword){setError('Enter your official email address and password.');return}const finalRole=demoRole|| (finalEmail.toLowerCase().startsWith('admin')?'admin':'officer');saveSession({name:finalRole==='admin'?'Admin Demonstrator':name||'Rajesh Kumar Sharma',email:finalEmail,role:finalRole});void keep;go('/dashboard')};const signUp=()=>{if(!name||!email||password.length<6||password!==confirm){setError('Complete all fields and make sure both passwords match.');return}saveSession({name,email,role});go('/dashboard')};const copy=(value:string)=>{void navigator.clipboard?.writeText(value)};return <div className="auth-page"><div className="auth-intro"><button className="auth-brand" onClick={()=>go('/')}><span className="public-mark">⚖</span><span><b>MetroGuard <i>AI</i></b><small>Enforcement Dashboard</small></span></button><div className="intro-content"><h1>Legal Metrology Compliance, powered by Computer Vision.</h1><p>An enforcement tool for officers under India's Ministry of Consumer Affairs — analyze product labels, detect violations, and manage your district's compliance queue.</p><div className="intro-features"><div><FileText size={17}/><span>AI-powered OCR label analysis against Legal Metrology Rules 2011</span></div><div><ShieldCheck size={17}/><span>Field-level compliance checking with rule references and confidence scores</span></div><div><Check size={17}/><span>Human-in-the-loop review queue for undetected declarations</span></div><div><BarChart3 size={17}/><span>Enforcement analytics and violation trend reporting</span></div></div></div><div className="auth-footer">Ministry of Consumer Affairs, Food & Public Distribution · Government of India · Legal Metrology Division<br/><small>SIH Project 26034 · Internal Enforcement Tool — Not for Public Distribution</small></div></div><div className="auth-form-panel"><div className="auth-form"><div className="auth-tabs"><button className={mode==='signin'?'selected':''} onClick={()=>{setMode('signin');setError('')}}>Sign In</button><button className={mode==='signup'?'selected':''} onClick={()=>{setMode('signup');setError('')}}>Sign Up</button></div>{mode==='signin'?<><h2>Sign in to your account</h2><p className="auth-subtitle">Authorised enforcement officers only</p><label>Official Email Address<small>Use your @metroguard.gov.in or @nic.in address</small><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="officer@metroguard.gov.in"/></label><label>Password<div className="password-input"><input type={showPassword?'text':'password'} value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password"/><button onClick={()=>setShowPassword(!showPassword)} aria-label="Show or hide password">{showPassword?<EyeOff size={16}/>:<Eye size={16}/>}</button></div></label><label className="check-label"><input type="checkbox" checked={keep} onChange={e=>setKeep(e.target.checked)}/>Keep me signed in on this device</label>{error&&<div className="auth-error">{error}</div>}<button className="primary wide" onClick={()=>signIn()}><LogIn size={16}/> Sign In</button><p className="switch-copy">Don't have an account? <button onClick={()=>setMode('signup')}>Sign Up</button></p><div className="credentials"><b>DEMO CREDENTIALS — HACKATHON ACCESS</b><div className="credential-row"><span className="badge blue">Officer</span><div><strong>officer@metroguard.gov.in</strong><small>Officer@2026</small></div><button onClick={()=>copy('officer@metroguard.gov.in / Officer@2026')} aria-label="Copy officer credentials"><Copy size={15}/></button><button className="use-button" onClick={()=>signIn('officer')}>Use</button></div><div className="credential-row"><span className="badge green">Admin</span><div><strong>admin@metroguard.gov.in</strong><small>Admin@2026</small></div><button onClick={()=>copy('admin@metroguard.gov.in / Admin@2026')} aria-label="Copy admin credentials"><Copy size={15}/></button><button className="use-button" onClick={()=>signIn('admin')}>Use</button></div></div></>:<><h2>Create your officer account</h2><p className="auth-subtitle">Register for authorised access to the enforcement dashboard</p><label>Full Name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your full name"/></label><label>Official Email Address<small>Use your @metroguard.gov.in or @nic.in address</small><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="officer@metroguard.gov.in"/></label><div className="auth-two-col"><label>Password<input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 characters"/></label><label>Confirm Password<input type="password" value={confirm} onChange={e=>setConfirm(e.target.value)} placeholder="Repeat password"/></label></div><label>Role<select value={role} onChange={e=>setRole(e.target.value as UserRole)}><option value="officer">Officer</option><option value="admin">Admin</option></select></label>{error&&<div className="auth-error">{error}</div>}<button className="primary wide" onClick={signUp}><UserPlus size={16}/> Create Account</button><p className="switch-copy">Already have an account? <button onClick={()=>setMode('signin')}>Sign In</button></p></>}<div className="auth-legal">This system is for authorised enforcement officers only. Unauthorised access is a punishable offence under IT Act 2000.<br/><span>This is a hackathon demonstration environment. No real officer data is used.</span></div></div></div></div>}
 function App(){const [path,setPath]=useState(location.pathname);const [session,setSession]=useState<Session|null>(readSession);useEffect(()=>{const fn=()=>{setPath(location.pathname);setSession(readSession())};addEventListener('popstate',fn);return()=>removeEventListener('popstate',fn)},[]);if(path==='/')return session?<><Shell><Dashboard/></Shell></>:<Landing/>;if(path==='/login')return session?<><Shell><Dashboard/></Shell></>:<Login/>;if(!session){go('/login');return null}const content:ReactNode=path==='/dashboard'?<Dashboard/>:path==='/scans'?<Scans/>:path==='/scans/new'?<NewScan/>:path==='/scans/new/batch'?<NewScan mode="batch"/>:path==='/scans/new/ecommerce'?<NewScan mode="ecommerce"/>:path==='/review-queue'?<Review/>:path==='/analytics'?<Analytics/>:path==='/admin/users'?<UsersAdmin/>:path.startsWith('/scans/')?<Detail id={path.split('/')[2]}/>:<Dashboard/>;return <Shell>{content}</Shell>}
 export default App;
-
-
