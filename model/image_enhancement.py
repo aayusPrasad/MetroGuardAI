@@ -1,6 +1,6 @@
-
 """Smart Image Enhancement for MetroGuard AI.
-Uses ESPCN Super-Resolution to recover low-resolution packaging images for OCR.
+Uses ESPCN Super-Resolution to recover low-resolution packaging images for OCR 
+with strict dimension bounds to prevent inference memory faults.
 """
 
 from __future__ import annotations
@@ -37,14 +37,16 @@ def _download_model_if_missing() -> bool:
 
 def _crop_to_pdp(image: np.ndarray) -> np.ndarray:
     """
-    Region-First Cropping: Detects the main packaging label (PDP) and crops to it.
-    Prevents wasting super-resolution processing on background clutter.
+    Safer PDP Cropping: Retains the full image or applies a very conservative 
+    margin to prevent cropping out critical side/bottom text declarations.
     """
+    h, w = image.shape[:2]
+    
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edged = cv2.Canny(blurred, 50, 150)
     
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    edged = cv2.Canny(blurred, 100, 200)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
     
     contours, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -53,22 +55,36 @@ def _crop_to_pdp(image: np.ndarray) -> np.ndarray:
         return image
         
     largest_contour = max(contours, key=cv2.contourArea)
-    x, y, w, h = cv2.boundingRect(largest_contour)
+    x, y, c_w, c_h = cv2.boundingRect(largest_contour)
     
-    img_area = image.shape[0] * image.shape[1]
-    if (w * h) > (0.2 * img_area):
-        return image[y:y+h, x:x+w]
+    img_area = h * w
+    if (0.3 * img_area) < (c_w * c_h) < (0.95 * img_area):
+        pad_x = int(c_w * 0.02)
+        pad_y = int(c_h * 0.02)
+        nx = max(0, x - pad_x)
+        ny = max(0, y - pad_y)
+        nw = min(w - nx, c_w + (2 * pad_x))
+        nh = min(h - ny, c_h + (2 * pad_y))
+        return image[ny:ny+nh, nx:nx+nw]
         
     return image
 
 
 def enhance_low_res_image(image: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
     """
-    Attempt ESPCN Super-Resolution on a cropped region, falling back to bicubic.
+    Attempt ESPCN Super-Resolution on a safe region with size limits, 
+    falling back to bicubic if unavailable or unsafe.
     """
     orig_h, orig_w = image.shape[:2]
     
+    # Safety Check: Downscale excessively large inputs to prevent C++ memory crashes
+    max_input_dim = 1600
+    if max(orig_h, orig_w) > max_input_dim:
+        scale = max_input_dim / max(orig_h, orig_w)
+        image = cv2.resize(image, (int(orig_w * scale), int(orig_h * scale)), interpolation=cv2.INTER_AREA)
+
     cropped = _crop_to_pdp(image)
+    crop_h, crop_w = cropped.shape[:2]
     
     enhanced = None
     enhancement_method = "none"
@@ -76,7 +92,8 @@ def enhance_low_res_image(image: np.ndarray) -> tuple[np.ndarray, dict[str, Any]
     has_model = _download_model_if_missing()
     
     try:
-        if has_model and hasattr(cv2, 'dnn_superres'):
+        # Prevent ESPCN from blowing up tensor dimensions if crop is already large
+        if has_model and hasattr(cv2, 'dnn_superres') and max(crop_h, crop_w) <= 1200:
             sr = cv2.dnn_superres.DnnSuperResImpl_create()
             sr.readModel(MODEL_NAME)
             sr.setModel("espcn", 4)
@@ -87,7 +104,6 @@ def enhance_low_res_image(image: np.ndarray) -> tuple[np.ndarray, dict[str, Any]
         logger.warning(f"Super-Resolution failed, falling back: {e}")
         
     if enhanced is None:
-        crop_h, crop_w = cropped.shape[:2]
         scale_factor = 1600.0 / max(crop_h, crop_w)
         if scale_factor > 1.0:
             new_w = int(crop_w * scale_factor)
@@ -97,6 +113,7 @@ def enhance_low_res_image(image: np.ndarray) -> tuple[np.ndarray, dict[str, Any]
             print(f"[Enhancement] Applied Bicubic Fallback scale: {scale_factor:.2f}x")
         else:
             enhanced = cropped
+            enhancement_method = "Direct_Resize"
             
     final_h, final_w = enhanced.shape[:2]
     
